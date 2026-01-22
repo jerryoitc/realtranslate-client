@@ -38,18 +38,16 @@
             border-radius: 15px;
             padding: 25px 20px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            max-height: 80vh;
+            overflow-y: auto;
         }
 
         .subtitle {
-            color: #ffd700;
-            font-size: 1.6rem;
-            font-weight: bold;
             text-align: center;
             line-height: 1.5;
-            min-height: 80px;
             display: flex;
-            align-items: center;
-            justify-content: center;
+            flex-direction: column;
+            justify-content: flex-end;
         }
 
         .status {
@@ -94,12 +92,41 @@
                 const subtitleRef = firebase.database().ref(`rooms/${roomId}/subtitle`);
                 document.getElementById('status').innerText = "已連線";
                 document.getElementById('status').classList.add('connected');
+
+                let history = [];
+                let lastText = "";
+
                 subtitleRef.on('value', (snapshot) => {
                     const data = snapshot.val();
                     if (data && data.translated) {
-                        document.getElementById('subtitle').innerText = data.translated;
+                        const newText = data.translated;
+                        // Avoid duplicates from same timestamp/event
+                        if (newText !== lastText) {
+                            lastText = newText;
+                            history.push(newText);
+                            if (history.length > 10) {
+                                history.shift();
+                            }
+                            renderSubtitles();
+                        }
                     }
                 });
+
+                function renderSubtitles() {
+                    const container = document.getElementById('subtitle');
+                    // Render history with latest at bottom, highlighted
+                    let html = history.map((text, index) => {
+                        const isLatest = index === history.length - 1;
+                        const style = isLatest
+                            ? "color: #ffd700; font-size: 1.8rem; font-weight: bold; margin-top: 15px;"
+                            : "color: rgba(255, 255, 255, 0.7); font-size: 1.2rem; font-weight: normal; margin-bottom: 5px;";
+                        return `<div style="${style}">${text}</div>`;
+                    }).join('');
+                    container.innerHTML = html;
+                    // Auto scroll to bottom
+                    const scrollContainer = document.querySelector('.subtitle-container');
+                    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+                }
             } catch (e) {
                 document.getElementById('subtitle').innerText = "連線錯誤";
                 document.getElementById('status').classList.add('error');
