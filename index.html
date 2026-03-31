@@ -54,7 +54,8 @@
             padding: 20px;
             display: flex;
             flex-direction: column;
-            justify-content: flex-end;
+            /* 改為從頂部開始排版，配合大量文本顯示 */
+            justify-content: flex-start; 
             overflow-y: auto;
             -webkit-overflow-scrolling: touch;
         }
@@ -63,18 +64,21 @@
             display: flex;
             flex-direction: column;
             gap: 15px;
+            /* 增加底部間距，避免文字被遮擋 */
+            padding-bottom: 50px; 
         }
 
         .subtitle-line {
-            font-size: 26px;
+            font-size: 24px;
             font-weight: bold;
             line-height: 1.4;
             word-wrap: break-word;
             transition: opacity 0.3s;
         }
 
-        .history { color: var(--text-secondary); opacity: 0.5; font-size: 22px; }
-        .current { color: var(--text-primary); border-left: 4px solid var(--accent-color); padding-left: 12px; }
+        /* 歷史紀錄字體稍小，透明度較低 */
+        .history { color: var(--text-secondary); opacity: 0.4; font-size: 20px; font-weight: normal; }
+        .current { color: var(--text-primary); border-left: 4px solid var(--accent-color); padding-left: 12px; margin-top: 10px; }
 
         #no-room {
             position: fixed;
@@ -102,12 +106,12 @@
 
     <div id="header">
         <div><span id="status-dot"></span> <span id="room-display">等待連線...</span></div>
-        <div style="color: #666;">RealTranslate v34.1</div>
+        <div style="color: #666;">RealTranslate v34.2</div>
     </div>
 
     <div id="container">
         <div id="subtitles">
-            <!-- 歷史紀錄會動態插入這裡 -->
+            <!-- 歷史紀錄容器 -->
             <div id="history-container"></div>
             <!-- 當前翻譯 -->
             <div class="subtitle-line current" id="live-text">請在電腦端開啟辨識...</div>
@@ -121,14 +125,12 @@
     </div>
 
     <script>
-        // 1. Firebase 配置
         const firebaseConfig = {
             databaseURL: "https://realtranslate-3bd83-default-rtdb.asia-southeast1.firebasedatabase.app/"
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
-        // 2. 解析網址 Room ID
         const urlParams = new URLSearchParams(window.location.search);
         const roomId = urlParams.get('room');
 
@@ -144,7 +146,6 @@
             const subtitleRef = db.ref(`rooms/${roomId}/subtitle`);
             const statusDot = document.getElementById('status-dot');
 
-            // 監聽字幕變動
             subtitleRef.on('value', (snapshot) => {
                 const data = snapshot.val();
                 statusDot.classList.add('connected');
@@ -154,17 +155,15 @@
                     if (!text) return;
 
                     if (data.isFinal) {
-                        // 如果是定稿且內容與上次不同
                         if (text !== lastFinalText) {
-                            // 將舊的定稿推入歷史（只保留最後三行）
                             if (lastFinalText) {
                                 const historyLine = document.createElement('div');
                                 historyLine.className = 'subtitle-line history';
                                 historyLine.innerText = lastFinalText;
                                 historyContainer.appendChild(historyLine);
                                 
-                                // 限制歷史行數
-                                while (historyContainer.children.length > 3) {
+                                // [核心優化] 保留至少 30 行文本 (29行歷史 + 1行當前)
+                                while (historyContainer.children.length > 29) {
                                     historyContainer.removeChild(historyContainer.firstChild);
                                 }
                             }
@@ -173,12 +172,11 @@
                             liveText.style.opacity = 1;
                         }
                     } else {
-                        // 預覽文字即時更新
                         liveText.innerText = text;
                         liveText.style.opacity = 0.8;
                     }
                     
-                    // 自動捲動
+                    // 自動捲動到底部
                     container.scrollTop = container.scrollHeight;
                 }
             }, (error) => {
@@ -187,33 +185,18 @@
             });
         }
 
-        // 3. 修復 WakeLock 權限問題 (Permissions Policy)
-        // 只有在瀏覽器支援且處於安全上下文時才請求
         async function requestWakeLock() {
             if ('wakeLock' in navigator) {
                 try {
-                    // 檢查權限狀態，避免在不被允許的環境下執行導致報錯
                     const wakeLock = await navigator.wakeLock.request('screen');
-                    console.log('螢幕防休眠已啟動');
-                    
-                    wakeLock.addEventListener('release', () => {
-                        console.log('螢幕防休眠已釋放');
-                    });
-                } catch (err) {
-                    // 攔截 NotAllowedError 或其他權限錯誤，防止程式崩潰
-                    console.warn(`WakeLock 啟動失敗: ${err.name}, ${err.message}`);
-                }
+                } catch (err) {}
             }
         }
 
-        // 當頁面可見度改變時重新請求
         document.addEventListener('visibilitychange', async () => {
-            if (document.visibilityState === 'visible') {
-                requestWakeLock();
-            }
+            if (document.visibilityState === 'visible') requestWakeLock();
         });
 
-        // 初次嘗試啟動（通常需要使用者點擊互動後才會成功，但這裡先進行 try-catch 保護）
         requestWakeLock();
     </script>
 </body>
