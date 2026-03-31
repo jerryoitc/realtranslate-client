@@ -34,6 +34,7 @@
             justify-content: space-between;
             align-items: center;
             font-size: 14px;
+            z-index: 10;
         }
 
         #status-dot {
@@ -42,7 +43,8 @@
             border-radius: 50%;
             display: inline-block;
             margin-right: 5px;
-            background: #ff5252; /* Default: Disconnected */
+            background: #ff5252;
+            transition: background 0.3s;
         }
 
         #status-dot.connected { background: #4caf50; }
@@ -52,21 +54,27 @@
             padding: 20px;
             display: flex;
             flex-direction: column;
-            justify-content: flex-end; /* 字幕從底部往上推 */
+            justify-content: flex-end;
             overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        #subtitles {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
         }
 
         .subtitle-line {
-            font-size: 28px;
+            font-size: 26px;
             font-weight: bold;
-            line-height: 1.5;
-            margin-bottom: 15px;
-            transition: all 0.3s ease;
+            line-height: 1.4;
             word-wrap: break-word;
+            transition: opacity 0.3s;
         }
 
-        .history { color: var(--text-primary); opacity: 0.6; }
-        .current { color: var(--text-primary); border-left: 4px solid var(--accent-color); padding-left: 10px; }
+        .history { color: var(--text-secondary); opacity: 0.5; font-size: 22px; }
+        .current { color: var(--text-primary); border-left: 4px solid var(--accent-color); padding-left: 12px; }
 
         #no-room {
             position: fixed;
@@ -94,12 +102,15 @@
 
     <div id="header">
         <div><span id="status-dot"></span> <span id="room-display">等待連線...</span></div>
-        <div style="color: #666;">RealTranslate v34</div>
+        <div style="color: #666;">RealTranslate v34.1</div>
     </div>
 
     <div id="container">
         <div id="subtitles">
-            <div class="subtitle-line current" id="live-text">請在電腦端開啟辨識...</div>
+            <!-- 歷史紀錄會動態插入這裡 -->
+            <div id="history-container"></div>
+            <!-- 當前翻譯 -->
+            <div class="subtitle-line current" id="live-text">電腦端開啟辨識...</div>
         </div>
     </div>
 
@@ -110,7 +121,7 @@
     </div>
 
     <script>
-        // 1. Firebase 配置 (需與 Python 端 FIREBASE_URL 對應)
+        // 1. Firebase 配置
         const firebaseConfig = {
             databaseURL: "https://realtranslate-3bd83-default-rtdb.asia-southeast1.firebasedatabase.app/"
         };
@@ -120,6 +131,11 @@
         // 2. 解析網址 Room ID
         const urlParams = new URLSearchParams(window.location.search);
         const roomId = urlParams.get('room');
+
+        let lastFinalText = "";
+        const historyContainer = document.getElementById('history-container');
+        const liveText = document.getElementById('live-text');
+        const container = document.getElementById('container');
 
         if (!roomId) {
             document.getElementById('no-room').style.display = 'block';
@@ -134,22 +150,36 @@
                 statusDot.classList.add('connected');
                 
                 if (data) {
-                    const liveText = document.getElementById('live-text');
                     const text = data.text || data.translated || "";
-                    
+                    if (!text) return;
+
                     if (data.isFinal) {
-                        // 定稿：將目前的文字變為歷史，並清空預覽區
-                        // 簡單實作：直接更新，並增加淡入效果
-                        liveText.style.opacity = 1;
-                        liveText.innerText = text;
+                        // 如果是定稿且內容與上次不同
+                        if (text !== lastFinalText) {
+                            // 將舊的定稿推入歷史（只保留最後三行）
+                            if (lastFinalText) {
+                                const historyLine = document.createElement('div');
+                                historyLine.className = 'subtitle-line history';
+                                historyLine.innerText = lastFinalText;
+                                historyContainer.appendChild(historyLine);
+                                
+                                // 限制歷史行數
+                                while (historyContainer.children.length > 3) {
+                                    historyContainer.removeChild(historyContainer.firstChild);
+                                }
+                            }
+                            lastFinalText = text;
+                            liveText.innerText = text;
+                            liveText.style.opacity = 1;
+                        }
                     } else {
-                        // 預覽：即時更新文字內容
+                        // 預覽文字即時更新
                         liveText.innerText = text;
                         liveText.style.opacity = 0.8;
                     }
                     
-                    // 自動滾動到底部
-                    window.scrollTo(0, document.body.scrollHeight);
+                    // 自動捲動
+                    container.scrollTop = container.scrollHeight;
                 }
             }, (error) => {
                 statusDot.classList.remove('connected');
@@ -157,10 +187,34 @@
             });
         }
 
-        // 防止手機螢幕自動休眠 (選配)
-        if ('wakeLock' in navigator) {
-            navigator.wakeLock.request('screen').catch(console.error);
+        // 3. 修復 WakeLock 權限問題 (Permissions Policy)
+        // 只有在瀏覽器支援且處於安全上下文時才請求
+        async function requestWakeLock() {
+            if ('wakeLock' in navigator) {
+                try {
+                    // 檢查權限狀態，避免在不被允許的環境下執行導致報錯
+                    const wakeLock = await navigator.wakeLock.request('screen');
+                    console.log('螢幕防休眠已啟動');
+                    
+                    wakeLock.addEventListener('release', () => {
+                        console.log('螢幕防休眠已釋放');
+                    });
+                } catch (err) {
+                    // 攔截 NotAllowedError 或其他權限錯誤，防止程式崩潰
+                    console.warn(`WakeLock 啟動失敗: ${err.name}, ${err.message}`);
+                }
+            }
         }
+
+        // 當頁面可見度改變時重新請求
+        document.addEventListener('visibilitychange', async () => {
+            if (document.visibilityState === 'visible') {
+                requestWakeLock();
+            }
+        });
+
+        // 初次嘗試啟動（通常需要使用者點擊互動後才會成功，但這裡先進行 try-catch 保護）
+        requestWakeLock();
     </script>
 </body>
 </html>
