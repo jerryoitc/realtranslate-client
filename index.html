@@ -54,7 +54,6 @@
             padding: 20px;
             display: flex;
             flex-direction: column;
-            /* 改為從頂部開始排版，配合大量文本顯示 */
             justify-content: flex-start; 
             overflow-y: auto;
             -webkit-overflow-scrolling: touch;
@@ -64,7 +63,6 @@
             display: flex;
             flex-direction: column;
             gap: 15px;
-            /* 增加底部間距，避免文字被遮擋 */
             padding-bottom: 50px; 
         }
 
@@ -76,9 +74,20 @@
             transition: opacity 0.3s;
         }
 
-        /* 歷史紀錄字體稍小，透明度較低 */
-        .history { color: var(--text-secondary); opacity: 0.4; font-size: 20px; font-weight: normal; }
-        .current { color: var(--text-primary); border-left: 4px solid var(--accent-color); padding-left: 12px; margin-top: 10px; }
+        /* 歷史紀錄更新：移除半透明，改為與當前文字一致的白色 */
+        .history { 
+            color: var(--text-primary); 
+            opacity: 1; 
+            font-size: 22px; 
+            font-weight: normal; 
+        }
+
+        .current { 
+            color: var(--text-primary); 
+            border-left: 4px solid var(--accent-color); 
+            padding-left: 12px; 
+            margin-top: 10px; 
+        }
 
         #no-room {
             position: fixed;
@@ -106,14 +115,12 @@
 
     <div id="header">
         <div><span id="status-dot"></span> <span id="room-display">等待連線...</span></div>
-        <div style="color: #666;">RealTranslate v34.2</div>
+        <div style="color: #666;">RealTranslate v34.3</div>
     </div>
 
     <div id="container">
         <div id="subtitles">
-            <!-- 歷史紀錄容器 -->
             <div id="history-container"></div>
-            <!-- 當前翻譯 -->
             <div class="subtitle-line current" id="live-text">請在電腦端開啟辨識...</div>
         </div>
     </div>
@@ -162,7 +169,6 @@
                                 historyLine.innerText = lastFinalText;
                                 historyContainer.appendChild(historyLine);
                                 
-                                // [核心優化] 保留至少 30 行文本 (29行歷史 + 1行當前)
                                 while (historyContainer.children.length > 29) {
                                     historyContainer.removeChild(historyContainer.firstChild);
                                 }
@@ -173,10 +179,9 @@
                         }
                     } else {
                         liveText.innerText = text;
-                        liveText.style.opacity = 0.8;
+                        liveText.style.opacity = 1; // 預覽字也設為完全不透明
                     }
                     
-                    // 自動捲動到底部
                     container.scrollTop = container.scrollHeight;
                 }
             }, (error) => {
@@ -188,7 +193,7 @@
         async function requestWakeLock() {
             if ('wakeLock' in navigator) {
                 try {
-                    const wakeLock = await navigator.wakeLock.request('screen');
+                    await navigator.wakeLock.request('screen');
                 } catch (err) {}
             }
         }
