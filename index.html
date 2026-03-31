@@ -1,139 +1,220 @@
-
 <!DOCTYPE html>
 <html lang="zh-TW">
-
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>即時字幕 - RealTranslate</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>RealTranslate 即時字幕同步</title>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
     <style>
-        * {
+        :root {
+            --bg-color: #121212;
+            --text-primary: #ffffff;
+            --text-secondary: #aaaaaa;
+            --accent-color: #00e5ff;
+        }
+
+        body, html {
             margin: 0;
             padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            min-height: 100vh;
+            height: 100%;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+            overflow: hidden;
             display: flex;
             flex-direction: column;
-            justify-content: center;
+        }
+
+        #header {
+            padding: 15px;
+            background: #1e1e1e;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
             align-items: center;
-            font-family: 'Microsoft JhengHei', sans-serif;
+            font-size: 14px;
+            z-index: 10;
+        }
+
+        #status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+            background: #ff5252;
+            transition: background 0.3s;
+        }
+
+        #status-dot.connected { background: #4caf50; }
+
+        #container {
+            flex: 1;
             padding: 20px;
-        }
-
-        .room-info {
-            color: #888;
-            font-size: 0.9rem;
-            margin-bottom: 10px;
-        }
-
-        .subtitle-container {
-            width: 100%;
-            max-width: 600px;
-            background: rgba(0, 0, 0, 0.7);
-            border-radius: 15px;
-            padding: 25px 20px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-
-        .subtitle {
-            text-align: center;
-            line-height: 1.5;
             display: flex;
             flex-direction: column;
             justify-content: flex-end;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
         }
 
-        .status {
+        #subtitles {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .subtitle-line {
+            font-size: 26px;
+            font-weight: bold;
+            line-height: 1.4;
+            word-wrap: break-word;
+            transition: opacity 0.3s;
+        }
+
+        .history { color: var(--text-secondary); opacity: 0.5; font-size: 22px; }
+        .current { color: var(--text-primary); border-left: 4px solid var(--accent-color); padding-left: 12px; }
+
+        #no-room {
             position: fixed;
-            top: 15px;
-            right: 15px;
-            font-size: 0.75rem;
-            color: #555;
-            background: rgba(0, 0, 0, 0.5);
-            padding: 4px 10px;
-            border-radius: 10px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            width: 80%;
         }
 
-        .connected {
-            color: #2ecc71;
+        .loading-spinner {
+            border: 4px solid rgba(255,255,255,0.1);
+            border-left-color: var(--accent-color);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
         }
 
-        .error {
-            color: #e74c3c;
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
-
 <body>
-    <div class="status" id="status">連線中...</div>
-    <div class="room-info" id="room-info"></div>
-    <div class="subtitle-container">
-        <div class="subtitle" id="subtitle">等待字幕...</div>
+
+    <div id="header">
+        <div><span id="status-dot"></span> <span id="room-display">等待連線...</span></div>
+        <div style="color: #666;">RealTranslate v34.1</div>
     </div>
+
+    <div id="container">
+        <div id="subtitles">
+            <!-- 歷史紀錄會動態插入這裡 -->
+            <div id="history-container"></div>
+            <!-- 當前翻譯 -->
+            <div class="subtitle-line current" id="live-text">請在電腦端開啟辨識...</div>
+        </div>
+    </div>
+
+    <div id="no-room" style="display:none;">
+        <div class="loading-spinner"></div>
+        <h2>未指定房間 ID</h2>
+        <p style="color:#888;">請掃描電腦端的 QR Code 進入</p>
+    </div>
+
     <script>
+        // 1. Firebase 配置
+        const firebaseConfig = {
+            databaseURL: "https://realtranslate-3bd83-default-rtdb.asia-southeast1.firebasedatabase.app/"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        // 2. 解析網址 Room ID
         const urlParams = new URLSearchParams(window.location.search);
         const roomId = urlParams.get('room');
-        const dbUrl = "https://realtranslate-3bd83-default-rtdb.asia-southeast1.firebasedatabase.app/";
+
+        let lastFinalText = "";
+        const historyContainer = document.getElementById('history-container');
+        const liveText = document.getElementById('live-text');
+        const container = document.getElementById('container');
 
         if (!roomId) {
-            document.getElementById('subtitle').innerText = "錯誤: 未指定房間";
-            document.getElementById('status').classList.add('error');
+            document.getElementById('no-room').style.display = 'block';
         } else {
-            document.getElementById('room-info').innerText = `房間: ${roomId}`;
-            try {
-                firebase.initializeApp({ databaseURL: dbUrl });
-                const subtitleRef = firebase.database().ref(`rooms/${roomId}/subtitle`);
-                document.getElementById('status').innerText = "已連線";
-                document.getElementById('status').classList.add('connected');
+            document.getElementById('room-display').innerText = `房間: ${roomId}`;
+            const subtitleRef = db.ref(`rooms/${roomId}/subtitle`);
+            const statusDot = document.getElementById('status-dot');
 
-                let history = [];
-                let lastText = "";
+            // 監聽字幕變動
+            subtitleRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                statusDot.classList.add('connected');
+                
+                if (data) {
+                    const text = data.text || data.translated || "";
+                    if (!text) return;
 
-                subtitleRef.on('value', (snapshot) => {
-                    const data = snapshot.val();
-                    if (data && data.translated) {
-                        const newText = data.translated;
-                        // Avoid duplicates from same timestamp/event
-                        if (newText !== lastText) {
-                            lastText = newText;
-                            history.push(newText);
-                            if (history.length > 10) {
-                                history.shift();
+                    if (data.isFinal) {
+                        // 如果是定稿且內容與上次不同
+                        if (text !== lastFinalText) {
+                            // 將舊的定稿推入歷史（只保留最後三行）
+                            if (lastFinalText) {
+                                const historyLine = document.createElement('div');
+                                historyLine.className = 'subtitle-line history';
+                                historyLine.innerText = lastFinalText;
+                                historyContainer.appendChild(historyLine);
+                                
+                                // 限制歷史行數
+                                while (historyContainer.children.length > 3) {
+                                    historyContainer.removeChild(historyContainer.firstChild);
+                                }
                             }
-                            renderSubtitles();
+                            lastFinalText = text;
+                            liveText.innerText = text;
+                            liveText.style.opacity = 1;
                         }
+                    } else {
+                        // 預覽文字即時更新
+                        liveText.innerText = text;
+                        liveText.style.opacity = 0.8;
                     }
-                });
-
-                function renderSubtitles() {
-                    const container = document.getElementById('subtitle');
-                    // Render history with latest at bottom, highlighted
-                    let html = history.map((text, index) => {
-                        const isLatest = index === history.length - 1;
-                        const style = isLatest
-                            ? "color: #ffd700; font-size: 1.8rem; font-weight: bold; margin-top: 15px;"
-                            : "color: rgba(255, 255, 255, 0.7); font-size: 1.2rem; font-weight: normal; margin-bottom: 5px;";
-                        return `<div style="${style}">${text}</div>`;
-                    }).join('');
-                    container.innerHTML = html;
-                    // Auto scroll to bottom
-                    const scrollContainer = document.querySelector('.subtitle-container');
-                    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+                    
+                    // 自動捲動
+                    container.scrollTop = container.scrollHeight;
                 }
-            } catch (e) {
-                document.getElementById('subtitle').innerText = "連線錯誤";
-                document.getElementById('status').classList.add('error');
+            }, (error) => {
+                statusDot.classList.remove('connected');
+                console.error("Firebase 讀取失敗:", error);
+            });
+        }
+
+        // 3. 修復 WakeLock 權限問題 (Permissions Policy)
+        // 只有在瀏覽器支援且處於安全上下文時才請求
+        async function requestWakeLock() {
+            if ('wakeLock' in navigator) {
+                try {
+                    // 檢查權限狀態，避免在不被允許的環境下執行導致報錯
+                    const wakeLock = await navigator.wakeLock.request('screen');
+                    console.log('螢幕防休眠已啟動');
+                    
+                    wakeLock.addEventListener('release', () => {
+                        console.log('螢幕防休眠已釋放');
+                    });
+                } catch (err) {
+                    // 攔截 NotAllowedError 或其他權限錯誤，防止程式崩潰
+                    console.warn(`WakeLock 啟動失敗: ${err.name}, ${err.message}`);
+                }
             }
         }
+
+        // 當頁面可見度改變時重新請求
+        document.addEventListener('visibilitychange', async () => {
+            if (document.visibilityState === 'visible') {
+                requestWakeLock();
+            }
+        });
+
+        // 初次嘗試啟動（通常需要使用者點擊互動後才會成功，但這裡先進行 try-catch 保護）
+        requestWakeLock();
     </script>
 </body>
-
 </html>
